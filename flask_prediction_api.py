@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-#!pip uninstall keras tensorflow -y
-#!pip install keras==2.2.5 tensorflow==1.13.1 pydload==1.0.8 flask_cors==3.0.8 flask-ngrok==0.0.25
-
-#from google.colab import drive
-#drive.mount(os.path.join(os.curdir,'drive'))
-
 
 # Módulos para o modelo e predição
 import numpy as np # linear algebra
@@ -22,9 +16,9 @@ import time
 import requests
 import os
 
-from flask import Flask, flash, get_flashed_messages, request, redirect, url_for, render_template_string
+from flask import Flask, flash, get_flashed_messages, request, redirect, url_for, render_template_string, Response, jsonify
 from flask_ngrok import run_with_ngrok
-#from flask_cors import CORS, cross_origin
+from flask_cors import CORS, cross_origin
 
 PROJECT_PATH = os.curdir # os.path.join(os.curdir,'drive','My Drive','TCC') para Google Colab
 
@@ -39,7 +33,7 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 #app.debug = True
 
 #app.config['CORS_HEADER'] = 'Content-Type'
-#cors = CORS(app, resources={r'/*': {"origins": '*'}})
+cors = CORS(app, resources={r'/*': {"origins": '*'}})
 
 
 # Funções para carregar o modelo com pesos e fazer a predição
@@ -56,7 +50,7 @@ def load_model_and_weights(path=PROJECT_PATH, model_json_name='/model.json', wei
     if not weight_exists:
         print('Beginning download of model with requests')
 
-        url = 'github_link'
+        url = 'https://github.com/asperino45/pneumonia-prediction-api/releases/download/v1.0/xray_class_weights.best.hdf5'
         r = requests.get(url)
 
         with open(weight_path, 'wb') as f:
@@ -83,9 +77,32 @@ def make_prediction(img):
         }
 
 
+# Tratamento de erros
+class InvalidUsage(Exception):
+    status_code = 400
+
+    def __init__(self, message, status_code=None, payload=None):
+        Exception.__init__(self)
+        self.message = message
+        if status_code is not None:
+            self.status_code = status_code
+        self.payload = payload
+
+    def to_dict(self):
+        rv = dict(self.payload or ())
+        rv['status_code'] = self.status_code
+        rv['mensagem'] = self.message
+        return rv
+
+@app.errorhandler(InvalidUsage)
+def handle_invalid_usage(error):
+    response = jsonify(error.to_dict())
+    response.status_code = error.status_code
+    return response
+
 # Caminhos da Api
 
-#@cross_origin()
+@cross_origin()
 @app.route('/predict', methods=['GET', 'POST'])
 def classifier_from_url():
     if request.method == 'GET':
@@ -93,21 +110,24 @@ def classifier_from_url():
     elif request.method == 'POST':
         url = request.json.get('url')
 
+    if url is None:
+        raise InvalidUsage('Não existe campo url')
+
     try:
         path = str(uuid.uuid4())
         dload_status = pydload.dload(url, path, timeout=2 ,max_time=3)
 
         if not dload_status:
             os.remove(path)
-            return json.dumps({'error': 'File too large to download'})
+            raise InvalidUsage('Arquivo é grande demais', status_code=413)
 
         img = cv2.imread(str(path))
         os.remove(path)
         res = make_prediction(img)
-        return json.dumps(res)
+        return jsonify(res)
     except Exception as ex:
         print(ex)
-        return json.dumps({'error': str(ex)})
+        raise InvalidUsage(str(ex), status_code=500)
 
 # Função para filtrar extensão do arquivo
 def allowed_file(filename):
@@ -115,30 +135,31 @@ def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-#@cross_origin()
+@cross_origin()
 @app.route('/predict/upload', methods=['POST'])
 def classifier_from_upload():
     if request.method == 'POST':
         # check if the post request has the file part
         if 'file' not in request.files:
-            return json.dumps({'error': 'No file part'})
+            raise InvalidUsage('Não existe parte "file" na requisição', status_code=400)
         file = request.files['file']
         # if user does not select file, browser also
         # submit an empty part without filename
         if file.filename == '':
-            return json.dumps({'error': 'No selected file'})
+            raise InvalidUsage('Nenhum arquivo selecionado ou sem nome', status_code=400)
         if file and not allowed_file(file.filename):
-            return json.dumps({'error': 'File extension not allowed'})
+            raise InvalidUsage('Extensão não permitida', status_code=400)
 
         try:
             # https://stackoverflow.com/questions/17170752/python-opencv-load-image-from-byte-string
             nparr = np.fromstring(file.read(), np.uint8)
             img = cv2.imdecode(nparr, cv2.IMREAD_COLOR) # cv2.IMREAD_COLOR in OpenCV 3.1
             res = make_prediction(img)
-            return json.dumps(res)
+            return jsonify(res)
         except Exception as ex:
             print(ex)
-            return json.dumps({'error': str(ex)})
+            raise InvalidUsage(str(ex), status_code=500)
+
 
 @app.route('/', methods=['GET'])
 def home():
@@ -182,11 +203,20 @@ if __name__=='__main__':
 
     model = load_model_and_weights()
     old_run = app.run
+    is_server_running = True
     try:
         run_with_ngrok(app)  # Start ngrok when app is run
         app.run()
-    except PermissionError:
-        old_run(debug=False, threaded=False, use_reloader=False)
+    except Exception as ex:
+        is_server_running = False
+        print(str(ex))
+    
+    if not is_server_running:
+        try:
+            old_run(debug=False, threaded=False, use_reloader=False)
+        except Exception as ex:
+            print(str(ex))
+
 
 
 
