@@ -46,7 +46,7 @@ pickleshare==0.7.5
 Pillow==7.1.2
 progressbar2==3.51.3
 prompt-toolkit==3.0.5
-protobuf==3.12.1
+protobuf==3.15.0
 ptyprocess==0.6.0
 pydload==1.0.8
 Pygments==2.6.1
