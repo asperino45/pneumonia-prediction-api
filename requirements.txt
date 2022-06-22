@@ -29,7 +29,7 @@ matplotlib==3.2.1
 mlxtend==0.14.0
 mock==4.0.2
 networkx==2.4
-numpy==1.18.4
+numpy==1.22.0
 opencv-contrib-python==4.1.2.30
 opencv-python==4.1.2.30
 pandas==1.0.3
